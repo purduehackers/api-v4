@@ -22,9 +22,19 @@ export type DiscordBotConnection = {
 
 export type DiscordDashboardConnection = {
   ws: WSContext;
+  /**
+   * Broadcasts that arrive while the replay backlog is still going out
+   * queue here. `undefined` marks a live connection that receives
+   * broadcasts directly.
+   */
+  pending?: string[];
 };
 
 const MESSAGES_CHANNEL = "phack:discord:messages";
+const RECENT_KEY = "phack:discord:recent";
+
+/** How many mirrored messages the replay buffer keeps for new clients. */
+const RECENT_LIMIT = 20;
 
 const dashboards = new Set<DiscordDashboardConnection>();
 
@@ -32,11 +42,45 @@ function logRedisError(error: RedisCommandFailed): void {
   console.error(error.message, error.cause);
 }
 
-/** Registers a receive-only dashboard socket. */
+/**
+ * Registers a receive-only dashboard socket. The socket first receives
+ * the replay buffer, oldest message first, and then live broadcasts.
+ * Registration is synchronous so no broadcast is lost while the replay
+ * buffer loads.
+ */
 export function connectDashboard(ws: WSContext): DiscordDashboardConnection {
-  const connection: DiscordDashboardConnection = { ws };
+  const connection: DiscordDashboardConnection = { ws, pending: [] };
   dashboards.add(connection);
+  void replayRecent(connection);
   return connection;
+}
+
+async function replayRecent(connection: DiscordDashboardConnection): Promise<void> {
+  const backlog = await runRedis(() => redis.lRange(RECENT_KEY, 0, RECENT_LIMIT - 1));
+  backlog.tapError(logRedisError);
+
+  const delivered = new Set<string>();
+  for (const serialized of backlog.unwrapOr([]).toReversed()) {
+    const message = decodeJson(DiscordMessageSchema, serialized);
+    if (message.isErr()) {
+      continue;
+    }
+
+    connection.ws.send(serialized);
+    delivered.add(message.value.id);
+  }
+
+  // No awaits from here on, so no broadcast can slip in mid-flush. A
+  // message published between the buffer read and this flush sits in
+  // `pending` and may also be in the backlog, hence the id check.
+  const pending = connection.pending ?? [];
+  connection.pending = undefined;
+  for (const serialized of pending) {
+    const message = decodeJson(DiscordMessageSchema, serialized);
+    if (message.isOk() && !delivered.has(message.value.id)) {
+      connection.ws.send(serialized);
+    }
+  }
 }
 
 /** Removes a disconnected dashboard socket. */
@@ -45,15 +89,19 @@ export function disconnectDashboard(connection: DiscordDashboardConnection): voi
 }
 
 /**
- * Publishes a validated message to every dashboard on every instance.
- * The caller handles authorization and validation.
+ * Publishes a validated message to every dashboard on every instance and
+ * appends it to the replay buffer new clients receive on connect. The
+ * caller handles authorization and validation.
  */
 export function broadcastMessage(
   message: DiscordMessage,
 ): Promise<Result<void, RedisCommandFailed>> {
-  return runRedis(() => redis.publish(MESSAGES_CHANNEL, JSON.stringify(message))).then(
-    (published) => published.map(() => undefined),
-  );
+  const serialized = JSON.stringify(message);
+  return runRedis(async () => {
+    await redis.lPush(RECENT_KEY, serialized);
+    await redis.lTrim(RECENT_KEY, 0, RECENT_LIMIT - 1);
+    await redis.publish(MESSAGES_CHANNEL, serialized);
+  });
 }
 
 /**
@@ -108,7 +156,11 @@ function authenticateBot(connection: DiscordBotConnection, text: string): void {
 
     const serialized = JSON.stringify(event.value);
     for (const dashboard of dashboards) {
-      dashboard.ws.send(serialized);
+      if (dashboard.pending === undefined) {
+        dashboard.ws.send(serialized);
+      } else {
+        dashboard.pending.push(serialized);
+      }
     }
   })
 ).tapError(logRedisError);

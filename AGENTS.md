@@ -4,7 +4,7 @@ Coordination server for Purdue Hackers hardware: doorbell, phone system, Discord
 
 ## Control plane
 
-WebSocket connections stay on the function instance that accepted them (the data plane). Everything shared crosses Redis (Upstash on Vercel): the doorbell ringing flag, phone state hashes, the ringer flag, presence rosters (sorted sets with heartbeat timestamps), and pub/sub channels for every broadcast. An instance never writes to another instance's sockets directly. It publishes, and each instance forwards to its local sockets. Phone state is keyed by phone type, one device per type. Transitions are read-modify-write without locks, so concurrent events are last-write-wins. That is acceptable for two phones on human timescales.
+WebSocket connections stay on the function instance that accepted them (the data plane). Everything shared crosses Redis (Upstash on Vercel): the doorbell ringing flag, phone state hashes, the ringer flag, presence rosters (sorted sets with heartbeat timestamps), pub/sub channels for every broadcast, and a 20-message replay buffer for the Discord dashboard feed. An instance never writes to another instance's sockets directly. It publishes, and each instance forwards to its local sockets. Phone state is keyed by phone type, one device per type. Transitions are read-modify-write without locks, so concurrent events are last-write-wins. That is acceptable for two phones on human timescales.
 
 ## Phonebell call model
 

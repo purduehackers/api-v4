@@ -61,7 +61,8 @@ discord.get(
   describeRoute({
     tags: ["Discord"],
     summary: "Discord dashboard WebSocket",
-    description: "Receive-only WebSocket feed of Discord messages. No authentication.",
+    description:
+      "Receive-only WebSocket feed of Discord messages. No authentication. On connect, the server replays the last 20 messages, oldest first, before streaming live ones.",
     responses: WEBSOCKET_RESPONSES,
   }),
   ...socketRoute({
