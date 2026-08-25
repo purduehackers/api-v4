@@ -19,5 +19,13 @@ const server = Bun.serve({
   fetch: (request, instance) => handleRequest(request, { server: instance }),
   websocket,
 });
+    }
+    return handleRequest(request, { server: instance });
+  },
+  websocket,
+});
+  },
+  websocket,
+});
 
 console.log(`Listening on ${server.url.href}`);

@@ -1,18 +1,6 @@
 {
   "name": "@purduehackers/api-v4",
-  "private": true,
-  "type": "module",
   "module": "src/server.ts",
-  "scripts": {
-    "dev": "bun --hot src/server.ts",
-    "start": "bun src/server.ts",
-    "format": "oxfmt",
-    "lint": "oxlint",
-    "typecheck": "tsc --noEmit",
-    "db:generate": "drizzle-kit generate",
-    "db:push": "drizzle-kit push",
-    "db:migrate": "drizzle-kit migrate"
-  },
   "dependencies": {
     "@hono/standard-validator": "^0.4.0",
     "@libsql/client": "^0.17.4",
@@ -30,9 +18,18 @@
     "oxfmt": "^0.65.0",
     "oxlint": "^1.80.0",
     "oxlint-tsgolint": "^7.0.2001",
-    "typescript": "^7"
+    "typescript": "^5"
   },
-  "peerDependencies": {
-    "typescript": "^7"
-  }
+  "private": true,
+  "scripts": {
+    "dev": "bun --hot src/server.ts",
+    "start": "bun src/server.ts",
+    "format": "oxfmt",
+    "lint": "oxlint",
+    "typecheck": "tsc --noEmit",
+    "db:generate": "drizzle-kit generate",
+    "db:push": "drizzle-kit push",
+    "db:migrate": "drizzle-kit migrate"
+  },
+  "type": "module"
 }
