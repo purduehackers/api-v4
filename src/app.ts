@@ -17,7 +17,9 @@ import discord from "./routes/discord";
 import doorbell from "./routes/doorbell";
 import phonebell from "./routes/phonebell";
 
-app.get(
+const meta = new Hono();
+
+meta.get(
   "/",
   describeRoute({
     tags: ["Meta"],
@@ -34,6 +36,7 @@ app.get(
     }),
 );
 
+app.route("/", meta);
 app.route("/attendance", attendance);
 app.route("/discord", discord);
 app.route("/doorbell", doorbell);
