@@ -9,8 +9,14 @@ import { websocket } from "hono/bun";
 
 import app from "./app";
 
+const { fetch: handleRequest } = app;
+
 const server = Bun.serve({
-  fetch: app.fetch,
+  /**
+   * Hands Hono the exact server object, so `upgradeWebSocket` finds
+   * `upgrade()` on Vercel's Bun shim and on a local Bun server alike.
+   */
+  fetch: (request, instance) => handleRequest(request, { server: instance }),
   websocket,
 });
 
