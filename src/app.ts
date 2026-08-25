@@ -8,6 +8,7 @@
 import { createServer } from "node:http";
 
 import { getRequestListener } from "@hono/node-server";
+import { Hono } from "hono";
 import { describeRoute, openAPIRouteHandler } from "hono-openapi";
 
 import { HealthResponseSchema, jsonResponse } from "./lib/openapi";
