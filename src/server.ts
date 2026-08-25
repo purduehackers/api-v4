@@ -1,23 +1,16 @@
 /**
- * @fileoverview Server entrypoint. Vercel's Bun framework preset detects
- * this single `Bun.serve()` call and routes every request through it,
- * including WebSocket upgrades. Locally, `bun --hot src/server.ts` serves
- * the same app on port 3000.
+ * @fileoverview Server entrypoint in Bun's module-export style. Bun and
+ * Vercel's Bun runtime run the default-exported server config. Both wire
+ * the `websocket` handler to the underlying server, so `upgradeWebSocket`
+ * can upgrade connections. Locally, `bun --hot src/server.ts` serves the
+ * app on port 3000.
  */
 
 import { websocket } from "hono/bun";
 
 import app from "./app";
 
-const { fetch: handleRequest } = app;
-
-const server = Bun.serve({
-  /**
-   * Hands Hono the exact server object, so `upgradeWebSocket` finds
-   * `upgrade()` on Vercel's Bun shim and on a local Bun server alike.
-   */
-  fetch: (request, instance) => handleRequest(request, { server: instance }),
+export default {
+  fetch: app.fetch,
   websocket,
-});
-
-console.log(`Listening on ${server.url.href}`);
+};
