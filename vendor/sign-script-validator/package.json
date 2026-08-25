@@ -1,0 +1,13 @@
+{
+  "name": "@purduehackers/sign-script-validator",
+  "version": "0.1.0",
+  "description": "WASM build of the Sign's script environment so api-v4 can reject a broken Rhai script at upload time, with the exact engine the firmware runs.",
+  "license": "MIT OR Apache-2.0",
+  "files": [
+    "sign_script_validator_bg.wasm",
+    "sign_script_validator.js",
+    "sign_script_validator.d.ts"
+  ],
+  "main": "sign_script_validator.js",
+  "types": "sign_script_validator.d.ts"
+}

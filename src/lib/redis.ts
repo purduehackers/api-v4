@@ -87,3 +87,10 @@ export function countPresence(key: string): Promise<Result<number, RedisCommandF
     Result.map((count) => Number(count ?? 0)),
   );
 }
+
+/** Lists roster members that sent a heartbeat within the fresh window. */
+export function listPresence(key: string): Promise<Result<string[], RedisCommandFailed>> {
+  return runRedis(() => redis.zRangeByScore(key, Date.now() - PRESENCE_FRESH_MS, "+inf")).then(
+    Result.map((members) => members ?? []),
+  );
+}

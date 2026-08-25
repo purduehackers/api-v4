@@ -13,6 +13,17 @@ export const attendanceTopics = sqliteTable(
   (table) => [index("attendance_topics_name_idx").on(table.name)],
 );
 
+// A singleton row: every sign mirrors the one stored script.
+export const signScript = sqliteTable(
+  "sign_script",
+  {
+    id: integer("id").primaryKey(),
+    script: text("script").notNull(),
+    updatedAtMs: integer("updated_at_ms", { mode: "number" }).notNull(),
+  },
+  (table) => [check("sign_script_singleton", sql`${table.id} = 1`)],
+);
+
 export const attendanceEvents = sqliteTable(
   "attendance_events",
   {

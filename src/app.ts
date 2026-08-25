@@ -17,6 +17,7 @@ import attendance from "./routes/attendance";
 import discord from "./routes/discord";
 import doorbell from "./routes/doorbell";
 import phonebell from "./routes/phonebell";
+import sign from "./routes/sign";
 
 const meta = new Hono();
 
@@ -42,6 +43,7 @@ app.route("/attendance", attendance);
 app.route("/discord", discord);
 app.route("/doorbell", doorbell);
 app.route("/phonebell", phonebell);
+app.route("/sign", sign);
 
 app.get(
   "/openapi",

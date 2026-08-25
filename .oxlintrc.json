@@ -114,6 +114,18 @@
   "env": {
     "builtin": true
   },
+  "ignorePatterns": ["vendor/**"],
+  "overrides": [
+    {
+      "files": ["tests/**"],
+      "rules": {
+        "rayhanadev/wrap-throwing-api": "off",
+        "rayhanadev/no-promise-reject": "off",
+        "rayhanadev/no-throw": "off",
+        "rayhanadev/no-unsafe-dictionary-type": "off"
+      }
+    }
+  ],
   "jsPlugins": [
     "oxclippy",
     {

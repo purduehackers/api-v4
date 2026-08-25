@@ -14,9 +14,17 @@ Two physical phones (Inside and Outside) connect over WebSocket and authenticate
 
 The dial plan accepts only the numbers listed in `KNOWN_NUMBERS` in `src/services/phonebell.ts`. Digits accumulate until they match a known number exactly. A dialed prefix of a known number waits for more digits. Anything else redirects to `0`, the operator number that rings all phones.
 
+## Sign fleet model
+
+The physical LED signs (ESP32 firmware in [purduehackers/sign-firmware](https://github.com/purduehackers/sign-firmware)) connect over `/sign/ws` and authenticate with an `auth` frame carrying `PHACK_API_KEY`. Every connected sign shares one identity and mirrors the same content — there is no per-device addressing, so every unit runs the identical binary with zero per-device configuration. The server drives the fleet with broadcast frames correlated by a `request_id` the signs echo back: `get_wifi`/`set_wifi` for WiFi config, `set_script`/`clear_script` for Rhai LED scripts. HTTP handlers publish requests to `phack:sign:requests`, every instance forwards them to its local sign sockets, and replies return over `phack:sign:replies` with a 10 second timeout. For reads, the first reply wins.
+
+## Sign scripts
+
+`PUT /sign/script` validates a Rhai script with `@purduehackers/sign-script-validator` (a WASM build of the firmware's own `script-env` crate, vendored in `vendor/`), stores it in the singleton `sign_script` row as the fleet's desired state, and broadcasts it to every connected sign. Storing succeeds with zero signs online. On every connect the server re-pushes the stored script, or an explicit `clear_script` when none is stored, so a reconnecting sign always converges. A sign without a script renders Lightning Time on its own.
+
 ## Authentication
 
-One shared secret, `PHACK_API_KEY`, authenticates every non-public client: the phones and door opener (first WebSocket frame), the Discord bot (auth frame over WebSocket, bearer token over HTTP), and `POST /phonebell/open`.
+One shared secret, `PHACK_API_KEY`, authenticates every non-public client: the phones and door opener (first WebSocket frame), the Discord bot (auth frame over WebSocket, bearer token over HTTP), `POST /phonebell/open`, the signs (auth frame), and the sign HTTP routes (bearer token).
 
 <!-- oxray:comments:start -->
 ## Error handling
