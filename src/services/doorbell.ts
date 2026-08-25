@@ -86,9 +86,7 @@ export function getStatus(): Promise<Result<{ ringing: boolean }, RedisCommandFa
  */
 export function ring(): Promise<Result<void, AlreadyRinging | RedisCommandFailed>> {
   return Result.gen(async function* () {
-    const claimed = yield* Result.await(
-      runRedis(() => redis.send("SET", [RINGING_KEY, "1", "NX"])),
-    );
+    const claimed = yield* Result.await(runRedis(() => redis.set(RINGING_KEY, "1", { NX: true })));
 
     if (claimed === null) {
       return Result.err(new AlreadyRinging({ message: "Already ringing" }));
@@ -161,7 +159,7 @@ function publishStatus(ringing: boolean): Promise<Result<void, RedisCommandFaile
 }
 
 function readRinging(): Promise<Result<boolean, RedisCommandFailed>> {
-  return runRedis(() => redis.exists(RINGING_KEY));
+  return runRedis(() => redis.exists(RINGING_KEY)).then(Result.map((count) => count === 1));
 }
 
 setInterval(() => {

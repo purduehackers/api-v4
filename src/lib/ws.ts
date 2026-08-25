@@ -4,11 +4,28 @@
  * decoding and the upgrade/connection lifecycle into one place.
  */
 
+import { createNodeWebSocket } from "@hono/node-ws";
 import { Result, TaggedError } from "better-result";
 import type { MiddlewareHandler } from "hono";
-import { upgradeWebSocket } from "hono/bun";
+import { Hono } from "hono";
 import type { WSContext, WSMessageReceive } from "hono/ws";
 import { json, z } from "zod";
+
+/**
+ * The Hono app lives here so `createNodeWebSocket` can bind to it before
+ * the route modules ask for `upgradeWebSocket`. `src/app.ts` registers
+ * the routes and owns the HTTP server.
+ */
+export const app = new Hono();
+
+const nodeWebSocket = createNodeWebSocket({ app });
+
+const { upgradeWebSocket } = nodeWebSocket;
+
+/** Wires WebSocket upgrade handling into the app's HTTP server. */
+export function injectWebSocket(server: Parameters<typeof nodeWebSocket.injectWebSocket>[0]): void {
+  nodeWebSocket.injectWebSocket(server);
+}
 
 /** The frame payload is a kind this API cannot decode as text. */
 export class UnreadableFrame extends TaggedError("UnreadableFrame")<{

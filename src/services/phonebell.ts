@@ -545,7 +545,7 @@ function publishFrames(
 
 function readState(phoneType: PhoneType): Promise<Result<PhoneState, RedisCommandFailed>> {
   return runRedis(() =>
-    redis.hmget(phoneStateKey(phoneType), [
+    redis.hmGet(phoneStateKey(phoneType), [
       "authenticated",
       "status",
       "hookState",
@@ -572,24 +572,19 @@ function writeState(
 ): Promise<Result<void, RedisCommandFailed>> {
   const key = phoneStateKey(phoneType);
   return runRedis(async () => {
-    await redis.hmset(key, [
-      "authenticated",
-      state.authenticated ? "1" : "0",
-      "status",
-      state.status,
-      "hookState",
-      state.hookState ? "1" : "0",
-      "dialedNumber",
-      state.dialedNumber,
-      "inCall",
-      state.inCall ? "1" : "0",
-    ]);
+    await redis.hSet(key, {
+      authenticated: state.authenticated ? "1" : "0",
+      status: state.status,
+      hookState: state.hookState ? "1" : "0",
+      dialedNumber: state.dialedNumber,
+      inCall: state.inCall ? "1" : "0",
+    });
     await redis.expire(key, PHONE_STATE_TTL_S);
   });
 }
 
 function readRinger(): Promise<Result<boolean, RedisCommandFailed>> {
-  return runRedis(() => redis.exists(RINGER_KEY));
+  return runRedis(() => redis.exists(RINGER_KEY)).then(Result.map((count) => count === 1));
 }
 
 function setRinger(ringing: boolean): Promise<Result<void, RedisCommandFailed>> {

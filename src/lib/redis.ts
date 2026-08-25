@@ -8,7 +8,7 @@
  */
 
 import { Result, TaggedError } from "better-result";
-import { RedisClient } from "bun";
+import { createClient } from "redis";
 
 import { env } from "../env";
 
@@ -18,11 +18,6 @@ export class RedisCommandFailed extends TaggedError("RedisCommandFailed")<{
   message: string;
 }> {}
 
-/** Command and publish connection. Connects lazily and reconnects itself. */
-export const redis = new RedisClient(env.REDIS_URL);
-
-const subscriber = new RedisClient(env.REDIS_URL);
-
 /** Captures a Redis operation's rejection as a typed Result. */
 export function runRedis<T>(run: () => Promise<T>): Promise<Result<T, RedisCommandFailed>> {
   return Result.tryPromise({
@@ -31,10 +26,29 @@ export function runRedis<T>(run: () => Promise<T>): Promise<Result<T, RedisComma
   });
 }
 
+function logRedisError(error: RedisCommandFailed): void {
+  console.error(error.message, error.cause);
+}
+
+/** Command and publish connection. The client reconnects itself. */
+export const redis = createClient({ url: env.REDIS_URL });
+
+const subscriber = redis.duplicate();
+
+redis.on("error", (cause: unknown) => {
+  console.error("Redis client error", cause);
+});
+subscriber.on("error", (cause: unknown) => {
+  console.error("Redis subscriber error", cause);
+});
+
+(await runRedis(() => redis.connect())).tapError(logRedisError);
+(await runRedis(() => subscriber.connect())).tapError(logRedisError);
+
 /**
  * Subscribes this instance to a control-plane channel. Services call this
- * once at module load. A subscription failure is fatal because the
- * instance would silently miss every broadcast.
+ * once at module load. The caller logs a subscription failure because
+ * the instance would silently miss every broadcast.
  */
 export async function subscribeToChannel(
   channel: string,
@@ -54,7 +68,7 @@ export function touchPresence(
   key: string,
   member: string,
 ): Promise<Result<void, RedisCommandFailed>> {
-  return runRedis(() => redis.send("ZADD", [key, String(Date.now()), member])).then(
+  return runRedis(() => redis.zAdd(key, { score: Date.now(), value: member })).then(
     Result.map(() => undefined),
   );
 }
@@ -64,12 +78,12 @@ export function removePresence(
   key: string,
   member: string,
 ): Promise<Result<void, RedisCommandFailed>> {
-  return runRedis(() => redis.send("ZREM", [key, member])).then(Result.map(() => undefined));
+  return runRedis(() => redis.zRem(key, member)).then(Result.map(() => undefined));
 }
 
 /** Counts roster members that sent a heartbeat within the fresh window. */
 export function countPresence(key: string): Promise<Result<number, RedisCommandFailed>> {
-  return runRedis(() =>
-    redis.send("ZCOUNT", [key, String(Date.now() - PRESENCE_FRESH_MS), "+inf"]),
-  ).then(Result.map((count) => Number(count ?? 0)));
+  return runRedis(() => redis.zCount(key, Date.now() - PRESENCE_FRESH_MS, "+inf")).then(
+    Result.map((count) => Number(count ?? 0)),
+  );
 }

@@ -1,6 +1,6 @@
 # Purdue Hackers API
 
-Coordination server for Purdue Hackers hardware: doorbell, phone system, Discord message feed, and attendance counters. It is a Hono app on Bun, deployed as one Vercel Function that also serves the WebSocket connections. Attendance data lives in Turso (libSQL) via Drizzle.
+Coordination server for Purdue Hackers hardware: doorbell, phone system, Discord message feed, and attendance counters. It is a Hono app deployed as one Vercel Function on the Node.js runtime, serving the WebSocket connections too. Bun runs it locally. Attendance data lives in Turso (libSQL) via Drizzle.
 
 ## Control plane
 

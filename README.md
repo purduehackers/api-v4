@@ -2,7 +2,7 @@
 
 Coordination server for managing Purdue Hackers hardware and systems. Controls doorbells, phones, Discord message feeds, and event attendance tracking — all through a unified REST + WebSocket API.
 
-Built with [Hono](https://hono.dev) on Bun, deployed as a single [Vercel Function](https://vercel.com/docs/functions) with [WebSocket support](https://vercel.com/docs/functions/websockets). Durable data lives in [Turso](https://turso.tech) via [Drizzle](https://orm.drizzle.team); realtime coordination state lives in Redis ([Upstash](https://vercel.com/marketplace/upstash) on Vercel).
+Built with [Hono](https://hono.dev), deployed as a single [Vercel Function](https://vercel.com/docs/functions) on the standard Node.js (Fluid compute) runtime with [WebSocket support](https://vercel.com/docs/functions/websockets). Bun runs it locally. Durable data lives in [Turso](https://turso.tech) via [Drizzle](https://orm.drizzle.team); realtime coordination state lives in Redis ([Upstash](https://vercel.com/marketplace/upstash) on Vercel).
 
 ## Getting started
 
@@ -31,8 +31,7 @@ Environment variables are listed in [`.env.example`](.env.example). Domain rules
 
 ```
 src/
-├── server.ts    # Bun.serve() entrypoint
-├── app.ts       # Hono app + OpenAPI spec route
+├── app.ts       # Entrypoint: routes + OpenAPI + the WebSocket-injected HTTP server
 ├── routes/      # Endpoints, annotated with hono-openapi
 ├── services/    # WebSocket coordination per subsystem (Redis control plane)
 ├── protocol/    # Zod schemas for HTTP bodies and WS messages
@@ -44,7 +43,7 @@ WebSocket connections stay on the function instance that accepted them (data pla
 
 ## Deploying
 
-`vercel.ts` configures the [Bun runtime](https://vercel.com/docs/functions/runtimes/bun) and `maxDuration: "max"`; Vercel detects the `Bun.serve()` call in `src/server.ts` and routes everything — WebSockets included — through one function.
+`vercel.json` sets `maxDuration: "max"`. Vercel resolves `src/app.ts` as the Hono entrypoint; its default export is a Node HTTP server with WebSocket upgrades injected ([`@hono/node-ws`](https://github.com/honojs/middleware/tree/main/packages/node-ws)), so everything — WebSockets included — runs through one function.
 
 ```bash
 vercel deploy

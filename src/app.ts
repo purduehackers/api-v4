@@ -1,13 +1,21 @@
-import { Hono } from "hono";
+/**
+ * @fileoverview Application entrypoint. Registers every route on the
+ * shared Hono app, wires WebSocket upgrades into a Node HTTP server, and
+ * exports that server for Vercel's Node runtime. Locally the server
+ * listens itself. On Vercel the platform owns the listener.
+ */
+
+import { createServer } from "node:http";
+
+import { getRequestListener } from "@hono/node-server";
 import { describeRoute, openAPIRouteHandler } from "hono-openapi";
 
 import { HealthResponseSchema, jsonResponse } from "./lib/openapi";
+import { app, injectWebSocket } from "./lib/ws";
 import attendance from "./routes/attendance";
 import discord from "./routes/discord";
 import doorbell from "./routes/doorbell";
 import phonebell from "./routes/phonebell";
-
-const app = new Hono();
 
 app.get(
   "/",
@@ -51,4 +59,12 @@ app.get(
   }),
 );
 
-export default app;
+const server = createServer(getRequestListener(app.fetch));
+injectWebSocket(server);
+
+if (process.env.VERCEL === undefined) {
+  server.listen(Number(process.env.PORT ?? 3000));
+}
+
+// oxlint-disable-next-line rayhanadev/filename-match-export -- Vercel resolves this filename as the Hono entrypoint and requires the HTTP server as its default export
+export default server;
