@@ -61,19 +61,33 @@ export type SignConnection = {
 };
 
 const PRESENCE_KEY = "phack:presence:sign";
-const REQUESTS_CHANNEL = "phack:sign:requests";
 const REPLIES_CHANNEL = "phack:sign:replies";
 const STATUS_KEY = "phack:sign:status";
+const FRAME_SEQ_KEY = "phack:sign:frame-seq";
+
+/** How long a queued frame stays fetchable. */
+const FRAME_TTL_S = 120;
+
+/** How often socket-holding instances look for queued frames. */
+const FRAME_POLL_MS = env.SIGN_FRAME_POLL_MS ?? 2_000;
+
+/**
+ * How long after auth the stored script replays. A sign that just booted
+ * is at peak heap pressure (its self-update fetches a large GitHub
+ * manifest over TLS right after connecting), so an immediate replay can
+ * be refused or lost.
+ */
+const REPLAY_DELAY_MS = env.SIGN_REPLAY_DELAY_MS ?? 90_000;
+
+function frameKey(seq: number): string {
+  return `phack:sign:frame:${seq}`;
+}
 
 /** The singleton row every sign converges to. */
 const SCRIPT_ROW_ID = 1;
 
 /** How long the fleet gets to answer a request, same as api-v3. */
 const REQUEST_TIMEOUT_MS = 10_000;
-
-const RequestEventSchema = z.object({
-  frame: json(),
-});
 
 const ReplyEventSchema = z.object({
   requestId: z.string(),
@@ -133,14 +147,22 @@ export async function handleMessage(
 
   if (message.type === "auth") {
     if (message.key !== env.PHACK_API_KEY) {
+      // The length alone distinguishes a stale firmware's old key from a
+      // truncated or empty one, without ever logging the secret.
+      console.error(`Sign auth failed: presented key length ${message.key.length}`);
       sendFrame(connection.ws, { type: "error", message: "Invalid API key" });
       connection.ws.close(1008, "Invalid API key");
       return;
     }
 
+    console.log(`Sign authenticated: connection ${connection.id}`);
     connection.authenticated = true;
     (await touchPresence(PRESENCE_KEY, connection.id)).tapError(logRedisError);
-    await pushStoredScript(connection);
+    setTimeout(() => {
+      if (connections.has(connection)) {
+        void pushStoredScript(connection);
+      }
+    }, REPLAY_DELAY_MS);
     return;
   }
 
@@ -159,28 +181,57 @@ export async function handleMessage(
         await runRedis(() =>
           redis.set(
             STATUS_KEY,
-            JSON.stringify({ version: message.version ?? null, seenAtMs: Date.now() }),
+            JSON.stringify({
+              version: message.version ?? null,
+              heapFree: message.heap_free ?? null,
+              heapLargest: message.heap_largest ?? null,
+              seenAtMs: Date.now(),
+            }),
           ),
         )
       ).tapError(logRedisError);
       break;
     case "wifi_networks":
     case "wifi_ack":
+      await publishReply(message.request_id, message);
+      break;
     case "script_ack":
+      console.log(`Sign script ack: connection ${connection.id}`);
+      await recordScriptEvent({ event: "ack", connection: connection.id });
       await publishReply(message.request_id, message);
       break;
     case "script_error":
       console.error(`Sign script error: ${message.message}`);
-      if (message.request_id !== undefined) {
+      await recordScriptEvent({ event: "error", message: message.message });
+      if (message.request_id != null) {
         await publishReply(message.request_id, message);
       }
       break;
     case "script_done":
       console.log("Sign script finished; the sign reverts to Lightning Time");
+      await recordScriptEvent({ event: "done", connection: connection.id });
+      // Scripts are 30-second moments: once one plays out, clear the
+      // stored state so it does not replay on the next reconnect.
+      (await runDb(() => db.delete(signScript).where(eq(signScript.id, SCRIPT_ROW_ID)))).tapError(
+        (error) => console.error(error.message, error.cause),
+      );
       break;
     case "pong":
       break;
   }
+}
+
+/**
+ * Durable trace of the latest script lifecycle events, because streamed
+ * function logs proved too lossy to debug the physical signs with.
+ */
+async function recordScriptEvent(event: Record<string, string>): Promise<void> {
+  (
+    await runRedis(() =>
+      redis.lPush("phack:sign:script-events", JSON.stringify({ ...event, atMs: Date.now() })),
+    )
+  ).tapError(logRedisError);
+  (await runRedis(() => redis.lTrim("phack:sign:script-events", 0, 19))).tapError(logRedisError);
 }
 
 async function publishReply(requestId: string, reply: SignDeviceMessage): Promise<void> {
@@ -201,12 +252,12 @@ async function pushStoredScript(connection: SignConnection): Promise<void> {
   stored
     .tap((rows) => {
       const requestId = crypto.randomUUID();
-      const row = rows[0];
+      const artifact = rows[0]?.artifact;
       sendFrame(
         connection.ws,
-        row === undefined
+        artifact == null
           ? { type: "clear_script", request_id: requestId }
-          : { type: "set_script", request_id: requestId, script: row.script },
+          : { type: "set_script", request_id: requestId, artifact },
       );
     })
     .tapError((error) => console.error(error.message, error.cause));
@@ -217,10 +268,17 @@ export function countConnected(): Promise<Result<number, RedisCommandFailed>> {
   return countPresence(PRESENCE_KEY);
 }
 
+/**
+ * Queues one frame for every connected sign. Delivery is pull-based: the
+ * instances holding sockets poll the sequence counter with the plain
+ * command client. A pub/sub subscriber silently dies when Vercel drains
+ * an instance while its sockets live on.
+ */
 function broadcastFrame(frame: SignRequestMessage): Promise<Result<void, RedisCommandFailed>> {
-  return runRedis(() => redis.publish(REQUESTS_CHANNEL, JSON.stringify({ frame }))).then(
-    Result.map(() => undefined),
-  );
+  return runRedis(async () => {
+    const seq = await redis.incr(FRAME_SEQ_KEY);
+    await redis.set(frameKey(seq), JSON.stringify(frame), { EX: FRAME_TTL_S });
+  }).then(Result.map(() => undefined));
 }
 
 /**
@@ -300,16 +358,17 @@ export function setWifi(
  */
 export function setScript(
   script: string,
+  artifact: string,
 ): Promise<Result<{ connected: number }, SignQueryFailed | RedisCommandFailed>> {
   return Result.gen(async function* () {
     yield* Result.await(
       runDb(() =>
         db
           .insert(signScript)
-          .values({ id: SCRIPT_ROW_ID, script, updatedAtMs: Date.now() })
+          .values({ id: SCRIPT_ROW_ID, script, artifact, updatedAtMs: Date.now() })
           .onConflictDoUpdate({
             target: signScript.id,
-            set: { script, updatedAtMs: Date.now() },
+            set: { script, artifact, updatedAtMs: Date.now() },
           }),
       ),
     );
@@ -320,7 +379,7 @@ export function setScript(
         broadcastFrame({
           type: "set_script",
           request_id: crypto.randomUUID(),
-          script,
+          artifact,
         }),
       );
     }
@@ -370,20 +429,37 @@ setInterval(() => {
   }
 }, PRESENCE_HEARTBEAT_MS);
 
-(
-  await subscribeToChannel(REQUESTS_CHANNEL, (message) => {
-    const event = decodeJson(RequestEventSchema, message);
-    if (event.isErr()) {
+/** The newest queued frame this instance has already forwarded. */
+let lastForwardedSeq: number | null = null;
+
+async function forwardQueuedFrames(): Promise<void> {
+  const forwarded = await runRedis(async () => {
+    const current = Number((await redis.get(FRAME_SEQ_KEY)) ?? 0);
+    if (lastForwardedSeq === null) {
+      // First poll: take a baseline instead of replaying history.
+      lastForwardedSeq = current;
       return;
     }
 
-    for (const connection of connections) {
-      if (connection.authenticated) {
-        connection.ws.send(JSON.stringify(event.value.frame));
+    for (let seq = lastForwardedSeq + 1; seq <= current; seq += 1) {
+      const raw = await redis.get(frameKey(seq));
+      lastForwardedSeq = seq;
+      if (raw === null) {
+        continue;
+      }
+      for (const connection of connections) {
+        if (connection.authenticated) {
+          connection.ws.send(raw);
+        }
       }
     }
-  })
-).tapError(logRedisError);
+  });
+  forwarded.tapError(logRedisError);
+}
+
+setInterval(() => {
+  void forwardQueuedFrames();
+}, FRAME_POLL_MS);
 
 (
   await subscribeToChannel(REPLIES_CHANNEL, (message) => {

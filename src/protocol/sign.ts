@@ -13,7 +13,7 @@ import { z } from "zod";
 export const WifiNetworkSchema = z.object({
   ssid: z.string(),
   password: z.string(),
-  network_type: z.enum(["personal", "enterprise"]).default("personal"),
+  network_type: z.enum(["personal", "enterprise", "wep"]).default("personal"),
   enterprise_email: z.string().optional(),
   enterprise_username: z.string().optional(),
 });
@@ -34,7 +34,9 @@ export const SignDeviceMessageSchema = z.discriminatedUnion("type", [
   }),
   z.object({
     type: z.literal("status"),
-    version: z.string().optional(),
+    version: z.string().nullish(),
+    heap_free: z.number().nullish(),
+    heap_largest: z.number().nullish(),
   }),
   z.object({
     type: z.literal("wifi_networks"),
@@ -52,11 +54,12 @@ export const SignDeviceMessageSchema = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("script_error"),
     // Present when replying to a set_script/clear_script push. Absent for
-    // an asynchronous runtime error from an already-running script.
-    request_id: z.string().optional(),
+    // an asynchronous runtime error from an already-running script. The
+    // firmware serializes missing values as null, so accept both.
+    request_id: z.string().nullish(),
     message: z.string(),
-    line: z.number().optional(),
-    position: z.number().optional(),
+    line: z.number().nullish(),
+    position: z.number().nullish(),
   }),
   z.object({
     type: z.literal("script_done"),
@@ -69,7 +72,9 @@ export type SignDeviceMessage = z.output<typeof SignDeviceMessageSchema>;
 export type SignRequestMessage =
   | { type: "get_wifi"; request_id: string }
   | { type: "set_wifi"; request_id: string; networks: WifiNetwork[] }
-  | { type: "set_script"; request_id: string; script: string }
+  // The artifact is base64 grain bytecode from the validator. The sign
+  // never parses script text.
+  | { type: "set_script"; request_id: string; artifact: string }
   | { type: "clear_script"; request_id: string };
 
 export const SignSetWifiRequestSchema = z.object({

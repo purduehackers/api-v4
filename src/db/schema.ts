@@ -19,6 +19,7 @@ export const signScript = sqliteTable(
   {
     id: integer("id").primaryKey(),
     script: text("script").notNull(),
+    artifact: text("artifact"),
     updatedAtMs: integer("updated_at_ms", { mode: "number" }).notNull(),
   },
   (table) => [check("sign_script_singleton", sql`${table.id} = 1`)],

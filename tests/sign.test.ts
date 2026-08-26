@@ -19,12 +19,14 @@ process.env.REDIS_URL =
   process.env.TEST_REDIS_URL ?? process.env.REDIS_URL ?? "redis://127.0.0.1:6379";
 process.env.PHACK_API_KEY = API_KEY;
 process.env.PORT = String(PORT);
+process.env.SIGN_REPLAY_DELAY_MS = "100";
+process.env.SIGN_FRAME_POLL_MS = "150";
 delete process.env.VERCEL;
 
 const { createClient } = await import("@libsql/client");
 const dbClient = createClient({ url: process.env.TURSO_DATABASE_URL });
 await dbClient.execute(
-  "CREATE TABLE IF NOT EXISTS sign_script (id integer PRIMARY KEY, script text NOT NULL, updated_at_ms integer NOT NULL)",
+  "CREATE TABLE IF NOT EXISTS sign_script (id integer PRIMARY KEY, script text NOT NULL, artifact text, updated_at_ms integer NOT NULL)",
 );
 
 const { redis } = await import("../src/lib/redis");
@@ -217,8 +219,8 @@ test("a valid script is stored and broadcast to every sign", async () => {
 
   const pushA = await signA.next("set_script");
   const pushB = await signB.next("set_script");
-  expect(pushA["script"]).toBe(script);
-  expect(pushB["script"]).toBe(script);
+  expect(String(pushA["artifact"]).length).toBeGreaterThan(0);
+  expect(pushB["artifact"]).toBe(pushA["artifact"]);
 
   const stored = await api("/sign/script");
   expect(stored.status).toBe(200);
@@ -229,7 +231,7 @@ test("a connecting sign gets the stored script replayed", async () => {
   const late = await MockSign.connect();
   late.send({ type: "auth", key: API_KEY });
   const replay = await late.next("set_script");
-  expect(String(replay["script"])).toContain("hsv");
+  expect(String(replay["artifact"]).length).toBeGreaterThan(0);
   late.close();
   await waitForConnected(2);
 });
@@ -269,6 +271,6 @@ test("with zero signs online, wifi 404s but scripts still store", async () => {
   signA = await MockSign.connect();
   signA.send({ type: "auth", key: API_KEY });
   const replay = await signA.next("set_script");
-  expect(replay["script"]).toBe(script);
+  expect(String(replay["artifact"]).length).toBeGreaterThan(0);
   signB = await MockSign.connectAuthenticated();
 });

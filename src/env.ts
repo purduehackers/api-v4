@@ -6,6 +6,9 @@ const EnvSchema = z.object({
   TURSO_AUTH_TOKEN: z.string().min(1).optional(),
   REDIS_URL: z.string().min(1),
   PHACK_API_KEY: z.string().min(1),
+  // Sign timing knobs, overridden by the test suite.
+  SIGN_REPLAY_DELAY_MS: z.coerce.number().optional(),
+  SIGN_FRAME_POLL_MS: z.coerce.number().optional(),
 });
 
 // A blank line in a .env file yields an empty string. Treat those keys as

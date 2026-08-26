@@ -15,6 +15,13 @@
       "when": 1787671116699,
       "tag": "0001_confused_jubilee",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1787681595476,
+      "tag": "0002_empty_tana_nile",
+      "breakpoints": true
     }
   ]
 }

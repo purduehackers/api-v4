@@ -44,6 +44,7 @@ const bearerSecurity = [{ bearerAuth: [] }];
 /** What the WASM validator's JSON string parses into. */
 const ValidationResultSchema = z.object({
   ok: z.boolean(),
+  artifact: z.string().optional(),
   error: z.string().optional(),
   line: z.number().optional(),
   col: z.number().optional(),
@@ -84,6 +85,12 @@ sign.get(
       "WebSocket endpoint for the physical signs. A sign authenticates with an `auth` frame, then answers server-pushed `get_wifi`/`set_wifi`/`set_script`/`clear_script` requests and may send `ping`, `status`, and script lifecycle frames. Every connected sign mirrors the same content.",
     responses: WEBSOCKET_RESPONSES,
   }),
+  async (c, next) => {
+    // Firmware 0.3.1+ reports its version here (PHSign/x.y.z), which
+    // tells connecting firmwares apart in the logs.
+    console.log(`Sign WS upgrade from: ${c.req.header("user-agent") ?? "unknown"}`);
+    await next();
+  },
   ...socketRoute({
     connect: (ws) => signService.connect(ws),
     message: (connection, data) => signService.handleMessage(connection, data),
@@ -215,7 +222,7 @@ sign.put(
     if (validation.isErr()) {
       return Response.json({ error: "Internal server error" }, { status: 500 });
     }
-    if (!validation.value.ok) {
+    if (!validation.value.ok || validation.value.artifact === undefined) {
       return Response.json(
         {
           error: validation.value.error ?? "Invalid script",
@@ -226,7 +233,7 @@ sign.put(
       );
     }
 
-    const pushed = await signService.setScript(script);
+    const pushed = await signService.setScript(script, validation.value.artifact);
     return pushed.match({
       ok: ({ connected }): Response => Response.json({ ok: true, connected }),
       err: errorResponse,

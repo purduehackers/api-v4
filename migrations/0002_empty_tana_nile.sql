@@ -1,0 +1,1 @@
+ALTER TABLE `sign_script` ADD `artifact` text;
