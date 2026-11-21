@@ -12,7 +12,7 @@ import { env } from "../env";
 import type { RedisCommandFailed } from "../lib/redis";
 import { redis, runRedis, subscribeToChannel } from "../lib/redis";
 import { decodeJson, readFrameText } from "../lib/ws";
-import type { DiscordMessage } from "../protocol/discord";
+import type { DiscordFeedFrame, DiscordMessage } from "../protocol/discord";
 import {
   DiscordAuthMessageSchema,
   DiscordFeedFrameSchema,
@@ -31,7 +31,7 @@ export type DiscordDashboardConnection = {
    * queue here. `undefined` marks a live connection that receives
    * broadcasts directly.
    */
-  pending?: string[];
+  pending?: DiscordFeedFrame[];
 };
 
 const MESSAGES_CHANNEL = "phack:discord:messages";
@@ -64,13 +64,14 @@ async function replayRecent(connection: DiscordDashboardConnection): Promise<voi
   backlog.tapError(logRedisError);
 
   const delivered = new Map<string, number>();
+  const replay: string[] = [];
   for (const serialized of backlog.unwrapOr([]).toReversed()) {
     const message = decodeJson(DiscordMessageSchema, serialized);
     if (message.isErr()) {
       continue;
     }
 
-    connection.ws.send(serialized);
+    replay.push(serialized);
     delivered.set(message.value.id, message.value.embedRevision ?? 0);
   }
 
@@ -79,13 +80,18 @@ async function replayRecent(connection: DiscordDashboardConnection): Promise<voi
   // `pending` and may also be in the backlog at the same revision.
   const pending = connection.pending ?? [];
   connection.pending = undefined;
-  for (const serialized of pending) {
-    const message = decodeJson(DiscordFeedFrameSchema, serialized);
-    if (
-      message.isOk() &&
-      (delivered.get(message.value.id) ?? -1) < (message.value.embedRevision ?? 0)
-    ) {
-      connection.ws.send(serialized);
+  if (backlog.isOk() && connection.ws.url?.searchParams.get("includeReplayIds") === "1") {
+    const ids = new Set(delivered.keys());
+    // A live post can also appear in the Redis snapshot if it arrives during the read.
+    for (const message of pending) {
+      if (!message.updateOnly) ids.delete(message.id);
+    }
+    connection.ws.send(JSON.stringify({ type: "replay", ids: [...ids] }));
+  }
+  for (const serialized of replay) connection.ws.send(serialized);
+  for (const message of pending) {
+    if ((delivered.get(message.id) ?? -1) < (message.embedRevision ?? 0)) {
+      connection.ws.send(JSON.stringify(message));
     }
   }
 }
@@ -207,7 +213,7 @@ function authenticateBot(connection: DiscordBotConnection, text: string): void {
       if (dashboard.pending === undefined) {
         dashboard.ws.send(serialized);
       } else {
-        dashboard.pending.push(serialized);
+        dashboard.pending.push(event.value);
       }
     }
   })

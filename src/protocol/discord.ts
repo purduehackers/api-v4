@@ -62,3 +62,5 @@ export type DiscordMessage = z.output<typeof DiscordMessageSchema>;
 export const DiscordFeedFrameSchema = DiscordMessageSchema.extend({
   updateOnly: z.literal(true).optional(),
 });
+
+export type DiscordFeedFrame = z.output<typeof DiscordFeedFrameSchema>;

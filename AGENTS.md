@@ -10,6 +10,8 @@ WebSocket connections stay on the function instance that accepted them (the data
 
 Replay contains the latest snapshot of each of the last 20 messages, in original delivery order. The bot stamps embed changes with `embedRevision`. Live changes carry `updateOnly: true` so dashboards can refresh a visible checkpoint without announcing it again. An update that overtakes its original waits in Redis for up to five minutes.
 
+Clients can request `?includeReplayIds=1` to identify scrollback. Before a successful replay, the relay sends `{ "type": "replay", "ids": [...] }`, including an empty list for an empty buffer. The list excludes new posts received live while Redis reads the buffer. The dashboard silences checkpoint announcements for IDs in its first list.
+
 ## Phonebell call model
 
 Two physical phones (Inside and Outside) connect over WebSocket and authenticate with `PHACK_API_KEY` as their first frame. Each phone type has one shared state record in Redis, so one device per type. Each phone moves through the statuses `idle`, `awaiting_user`, `calling_others`, `in_call`, and `awaiting_others`, driven by `Dial` and `Hook` frames. Off-hook dialing of a known number rings every other phone. When the last active caller hangs up or disconnects, the shared ringer turns off. While in a call, the Inside phone dials `0` to trigger the door opener. Audio flows peer-to-peer over WebRTC; the `/phonebell/signaling` sockets only relay signaling frames between peers.
