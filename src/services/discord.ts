@@ -13,7 +13,11 @@ import type { RedisCommandFailed } from "../lib/redis";
 import { redis, runRedis, subscribeToChannel } from "../lib/redis";
 import { decodeJson, readFrameText } from "../lib/ws";
 import type { DiscordMessage } from "../protocol/discord";
-import { DiscordAuthMessageSchema, DiscordMessageSchema } from "../protocol/discord";
+import {
+  DiscordAuthMessageSchema,
+  DiscordFeedFrameSchema,
+  DiscordMessageSchema,
+} from "../protocol/discord";
 
 export type DiscordBotConnection = {
   ws: WSContext;
@@ -59,7 +63,7 @@ async function replayRecent(connection: DiscordDashboardConnection): Promise<voi
   const backlog = await runRedis(() => redis.lRange(RECENT_KEY, 0, RECENT_LIMIT - 1));
   backlog.tapError(logRedisError);
 
-  const delivered = new Set<string>();
+  const delivered = new Map<string, number>();
   for (const serialized of backlog.unwrapOr([]).toReversed()) {
     const message = decodeJson(DiscordMessageSchema, serialized);
     if (message.isErr()) {
@@ -67,17 +71,20 @@ async function replayRecent(connection: DiscordDashboardConnection): Promise<voi
     }
 
     connection.ws.send(serialized);
-    delivered.add(message.value.id);
+    delivered.set(message.value.id, message.value.embedRevision ?? 0);
   }
 
   // No awaits from here on, so no broadcast can slip in mid-flush. A
   // message published between the buffer read and this flush sits in
-  // `pending` and may also be in the backlog, hence the id check.
+  // `pending` and may also be in the backlog at the same revision.
   const pending = connection.pending ?? [];
   connection.pending = undefined;
   for (const serialized of pending) {
-    const message = decodeJson(DiscordMessageSchema, serialized);
-    if (message.isOk() && !delivered.has(message.value.id)) {
+    const message = decodeJson(DiscordFeedFrameSchema, serialized);
+    if (
+      message.isOk() &&
+      (delivered.get(message.value.id) ?? -1) < (message.value.embedRevision ?? 0)
+    ) {
       connection.ws.send(serialized);
     }
   }
@@ -88,20 +95,61 @@ export function disconnectDashboard(connection: DiscordDashboardConnection): voi
   dashboards.delete(connection);
 }
 
+// Keep replay and publication atomic across API instances. Discord can send a
+// preview while the bot is still rendering or retrying the original message.
+const STORE_AND_PUBLISH = `
+  local recent, pending = KEYS[1], KEYS[2]
+  local id, snapshot, revision, live, channel, limit = unpack(ARGV)
+  revision = tonumber(revision)
+  for index, entry in ipairs(redis.call('LRANGE', recent, 0, -1)) do
+    local ok, stored = pcall(cjson.decode, entry)
+    if ok and type(stored) == 'table' and stored.id == id then
+      if revision > (stored.embedRevision or 0) then
+        redis.call('LSET', recent, index - 1, snapshot)
+        redis.call('PUBLISH', channel, live)
+      end
+      return
+    end
+  end
+  if revision > 0 then
+    local prior = redis.call('GET', pending)
+    if not prior or revision > cjson.decode(prior).embedRevision then
+      redis.call('SET', pending, snapshot, 'EX', 300)
+      redis.call('PUBLISH', channel, live)
+    end
+    return
+  end
+  local original = redis.call('GET', pending) or snapshot
+  redis.call('DEL', pending)
+  redis.call('LPUSH', recent, original)
+  redis.call('LTRIM', recent, 0, tonumber(limit) - 1)
+  redis.call('PUBLISH', channel, original)
+`;
+
 /**
- * Publishes a validated message to every dashboard on every instance and
- * appends it to the replay buffer new clients receive on connect. The
- * caller handles authorization and validation.
+ * Stores each message once and publishes newer embed snapshots without moving its replay position.
+ * @see ../../AGENTS.md#discord-dashboard-feed
  */
 export function broadcastMessage(
   message: DiscordMessage,
 ): Promise<Result<void, RedisCommandFailed>> {
   const serialized = JSON.stringify(message);
-  return runRedis(async () => {
-    await redis.lPush(RECENT_KEY, serialized);
-    await redis.lTrim(RECENT_KEY, 0, RECENT_LIMIT - 1);
-    await redis.publish(MESSAGES_CHANNEL, serialized);
-  });
+  const live = message.embedRevision
+    ? JSON.stringify({ ...message, updateOnly: true })
+    : serialized;
+  return runRedis(() =>
+    redis.eval(STORE_AND_PUBLISH, {
+      keys: [RECENT_KEY, `{${RECENT_KEY}}:pending:${message.id}`],
+      arguments: [
+        message.id,
+        serialized,
+        String(message.embedRevision ?? 0),
+        live,
+        MESSAGES_CHANNEL,
+        String(RECENT_LIMIT),
+      ],
+    }),
+  ).then((result) => result.map(() => undefined));
 }
 
 /**
@@ -149,7 +197,7 @@ function authenticateBot(connection: DiscordBotConnection, text: string): void {
 
 (
   await subscribeToChannel(MESSAGES_CHANNEL, (message) => {
-    const event = decodeJson(DiscordMessageSchema, message);
+    const event = decodeJson(DiscordFeedFrameSchema, message);
     if (event.isErr()) {
       return;
     }

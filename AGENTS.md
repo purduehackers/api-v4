@@ -6,6 +6,10 @@ Coordination server for Purdue Hackers hardware: doorbell, phone system, Discord
 
 WebSocket connections stay on the function instance that accepted them (the data plane). Everything shared crosses Redis (Upstash on Vercel): the doorbell ringing flag, phone state hashes, the ringer flag, presence rosters (sorted sets with heartbeat timestamps), pub/sub channels for every broadcast, and a 20-message replay buffer for the Discord dashboard feed. An instance never writes to another instance's sockets directly. It publishes, and each instance forwards to its local sockets. Phone state is keyed by phone type, one device per type. Transitions are read-modify-write without locks, so concurrent events are last-write-wins. That is acceptable for two phones on human timescales.
 
+## Discord dashboard feed
+
+Replay contains the latest snapshot of each of the last 20 messages, in original delivery order. The bot stamps embed changes with `embedRevision`. Live changes carry `updateOnly: true` so dashboards can refresh a visible checkpoint without announcing it again. An update that overtakes its original waits in Redis for up to five minutes.
+
 ## Phonebell call model
 
 Two physical phones (Inside and Outside) connect over WebSocket and authenticate with `PHACK_API_KEY` as their first frame. Each phone type has one shared state record in Redis, so one device per type. Each phone moves through the statuses `idle`, `awaiting_user`, `calling_others`, `in_call`, and `awaiting_others`, driven by `Dial` and `Hook` frames. Off-hook dialing of a known number rings every other phone. When the last active caller hangs up or disconnects, the shared ringer turns off. While in a call, the Inside phone dials `0` to trigger the door opener. Audio flows peer-to-peer over WebRTC; the `/phonebell/signaling` sockets only relay signaling frames between peers.
